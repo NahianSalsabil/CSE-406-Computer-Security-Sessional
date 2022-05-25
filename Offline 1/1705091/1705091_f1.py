@@ -83,15 +83,18 @@ def convert_to_matrix(oneD_array):   # Convert to a 4*4 matrix
 
 
 ##Byte Substitution
-def byte_substitution(element):    # Byte Substitution
+def byte_substitution(element, mode):    # Byte Substitution
     b = BitVector(hexstring=element)
     int_val = b.intValue()
-    s = Sbox[int_val]
+    if mode == 1:
+        s = Sbox[int_val]
+    else:
+        s = InvSbox[int_val]
     s = BitVector(intVal=s, size=8)
     return s.get_bitvector_in_hex()
 
-## Shift Row
-def Shift_Row(state_matrix):
+## Shift Row Encryption
+def Shift_Row_Encryption(state_matrix):
     for i in range(0,4):
         if i == 1:
             temp = state_matrix[1][0]
@@ -114,15 +117,42 @@ def Shift_Row(state_matrix):
             state_matrix[i][0] = temp
     return state_matrix
 
+## Shift Row Decryption
+def Shift_Row_Decryption(state_matrix):
+    for i in range(0,4):
+        if i == 1:
+            temp = state_matrix[1][3]
+            state_matrix[i][3] = state_matrix[i][2]
+            state_matrix[i][2] = state_matrix[i][1]
+            state_matrix[i][1] = state_matrix[i][0]
+            state_matrix[i][0] = temp
+        if i == 2:
+            temp = state_matrix[i][2]
+            state_matrix[i][2] = state_matrix[i][0]
+            state_matrix[i][0] = temp
+            temp = state_matrix[i][3]
+            state_matrix[i][3] = state_matrix[i][1]
+            state_matrix[i][1] = temp
+        if i == 3:
+            temp = state_matrix[i][0]
+            state_matrix[i][0] = state_matrix[i][1]
+            state_matrix[i][1] = state_matrix[i][2]
+            state_matrix[i][2] = state_matrix[i][3]
+            state_matrix[i][3] = temp
+    return state_matrix
+
 AES_modulus = BitVector(bitstring='100011011')
 
 ## Mix Column
-def Mix_Column(state_matrix, mixer):
+def Mix_Column(state_matrix, mode):
     result = [[""]*column for i in range(row)]
-    for i in range(len(mixer)):   #iteration by row of mixer
+    for i in range(len(Mixer)):   #iteration by row of mixer
         for j in range(len(state_matrix[0])):    # iterating by column of state matrix
             for k in range(len(state_matrix)):             # iterating by rows of state matrix
-                mult = mixer[i][k].gf_multiply_modular(BitVector(hexstring=state_matrix[k][j]), AES_modulus, 8)
+                if mode == 1:      ## Encryption
+                    mult = Mixer[i][k].gf_multiply_modular(BitVector(hexstring=state_matrix[k][j]), AES_modulus, 8)
+                else:
+                    mult = InvMixer[i][k].gf_multiply_modular(BitVector(hexstring=state_matrix[k][j]), AES_modulus, 8)
                 result[i][j] = (BitVector(hexstring=result[i][j]) ^ (mult)).get_bitvector_in_hex()
     result = np.array(result)
     return result
@@ -142,7 +172,7 @@ def g_function(word, round_constant):
     # print("After circular byte shift: ", word)
     # byte substitution
     for i in range(0,4):
-        word[i] = byte_substitution(word[i])
+        word[i] = byte_substitution(word[i], 1)
     # print("after byte substitution: ", word)
     #Add round constant
     for i in range(0,4):
@@ -167,10 +197,16 @@ def key_expansion(word0, word1, word2, word3, round):   # Key Expansion
     # print(word3)
     return word0, word1, word2, word3
 
-       
+def convert_to_cipher_text(state_matrix):
+    cipher_text = ""
+    for i in range(len(state_matrix[0])):
+        for j in range(len(state_matrix)):
+            cipher_text += str(state_matrix[j][i])
+    return cipher_text
 
 plain_text = input("Enter your text: ")
 print(plain_text)
+no_of_strip_char = 16 - (len(plain_text) % 16)
 key = input("Enter key: ")
 key = key[:16]
 while len(key) < 16:
@@ -181,8 +217,6 @@ print(key)
 hex_plaintext = convert_to_hex(plain_text)
 hex_key = convert_to_hex(key)
 
-print(hex_plaintext)
-print(hex_key)
 
 #convert to a 4*4 matrix
 key_matrix = convert_to_matrix(hex_key)
@@ -195,13 +229,14 @@ word1 = np.array(key_matrix[:,1])
 word2 = np.array(key_matrix[:,2])
 word3 = np.array(key_matrix[:,3])
 
+total_round = 11
 
 ## All Round Key Generation
-All_Round_Key = [None] * 11
+All_Round_Key = [None] * total_round
 intermediate_round_key = np.empty((4,4), dtype=str)
 All_Round_Key[0] = key_matrix
 
-for round in range(1, 11):
+for round in range(1, total_round):
     word0, word1, word2, word3 = key_expansion(word0, word1, word2, word3, round)
     intermediate_round_key = np.concatenate((word0, word1, word2, word3))
     intermediate_round_key = np.reshape(intermediate_round_key, (4,4))
@@ -210,9 +245,12 @@ for round in range(1, 11):
 All_Round_Key = np.array(All_Round_Key)
 # print("All Round Key: \n", All_Round_Key)   
 
+All_Cipher_Text_matrix = []
 
                                             ##### Encryption #####
 ## Round 1- 10 for 128 bits
+mode = 1
+Cipher_Text = ""
 while len(hex_plaintext) != 0:
     
     # take the first 128 bits of the plain text and construct the state matrix
@@ -225,40 +263,80 @@ while len(hex_plaintext) != 0:
     
     ## Round 0: Add Round Key
     state_matrix = Add_RoundKey(state_matrix, All_Round_Key[0])
-    print("After Round 0:\n", state_matrix)
+    # print("After Round 0:\n", state_matrix)
     
     ## For Round 1-10
-    for round in range(1,11):
+    for round in range(1,total_round):
                                  #### 4 steps of encryption ####
-        print("#### Round: ", round)     
+        # print("#### Round: ", round)     
         #First step: Substution Bytes
         for i in range(0,row):
             for j in range(0,column):
-                state_matrix[i][j] = byte_substitution(state_matrix[i][j])
+                state_matrix[i][j] = byte_substitution(state_matrix[i][j], mode)
                 
         #Second Step: Shift Row
-        state_matrix = Shift_Row(state_matrix)
+        state_matrix = Shift_Row_Encryption(state_matrix)
         # print("State Matrix after shifting row: ", state_matrix)
         
         #Third Step: Mix Column
         if round != 10:
-            state_matrix = Mix_Column(state_matrix, Mixer)
+            state_matrix = Mix_Column(state_matrix, mode)
             # print("State Matrix after mix column: ", state_matrix)
         
         #Fourth Step: Add Round Key
         state_matrix = Add_RoundKey(state_matrix, All_Round_Key[round])
-        print("State Matrix after another round: ", state_matrix)
-        
+        # print("State Matrix after another round: ", state_matrix)
+    
+    All_Cipher_Text_matrix.append(state_matrix)    
+    block_cipher = convert_to_cipher_text(state_matrix)   
     print("Cipher Text:")
-    print(state_matrix)
-   
+    print(block_cipher)
     
+
+                                    ##### Decryption #####
+mode = 0
+index = 0;
+while index < len(All_Cipher_Text_matrix):
+    state_matrix = All_Cipher_Text_matrix[index]
+    # print("Decipher time state matrix:\n", state_matrix)
+    ## For Round 0-9
+    for round in range(0,total_round-1):
+                                 #### 4 steps of Decryption ####
+        # print("#### Round: ", round) 
+        #First Step: Add Round Key
+        state_matrix = Add_RoundKey(state_matrix, All_Round_Key[total_round - round - 1])
+        # print("State Matrix after adding round key: ", state_matrix)
+        
+        # Second Step: Mix Column
+        if round != 0:
+            state_matrix = Mix_Column(state_matrix, mode)
+            # print("State Matrix after mix column: ", state_matrix)
+                      
+        #Third Step: Shift Row
+        state_matrix = Shift_Row_Decryption(state_matrix)
+        # print("State Matrix after shifting row: ", state_matrix)
+        
+        #Fourth step: Substution Bytes
+        for i in range(0,row):
+            for j in range(0,column):
+                state_matrix[i][j] = byte_substitution(state_matrix[i][j], mode)
+        # print("State matrix after byte sub: \n", state_matrix)
     
+    ## Round 10: Add Round Key
+    state_matrix = Add_RoundKey(state_matrix, All_Round_Key[0])
+    # print("After Round 10:\n", state_matrix)
     
+    block_decipher = convert_to_cipher_text(state_matrix)   
+    print("Decipher Text:")
+    print(block_decipher)
+    byte_array = bytearray.fromhex(block_decipher)
+    text = byte_array.decode()
+    if index == len(All_Cipher_Text_matrix) - 1:
+        text = text[:16-no_of_strip_char]
+    print(text)
     
-    
-    
+    index += 1
+
     
 
 
-   
