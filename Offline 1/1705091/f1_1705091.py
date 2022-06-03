@@ -1,6 +1,7 @@
 from pydoc import plain
 from BitVector import *
 import numpy as np
+import time
 
 Sbox = (
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
@@ -67,6 +68,11 @@ Round_Constant = [
     ["36", "00", "00", "00"]
 ]
 column = row = 4
+
+AES_modulus = BitVector(bitstring='100011011')
+
+total_round = 11
+
 
 def convert_to_hex(value):    # Convert ASCII to HEX
     i = 0
@@ -141,7 +147,6 @@ def Shift_Row_Decryption(state_matrix):
             state_matrix[i][3] = temp
     return state_matrix
 
-AES_modulus = BitVector(bitstring='100011011')
 
 ## Mix Column
 def Mix_Column(state_matrix, mode):
@@ -169,15 +174,12 @@ def Add_RoundKey(state_matrix,round_key_matrix):
 def g_function(word, round_constant):   
     # Circular Byte Shift
     word = np.roll(word, -1)
-    # print("After circular byte shift: ", word)
     # byte substitution
     for i in range(0,4):
         word[i] = byte_substitution(word[i], 1)
-    # print("after byte substitution: ", word)
     #Add round constant
     for i in range(0,4):
         word[i] = (BitVector(hexstring=round_constant[i]) ^ BitVector(hexstring = word[i])).get_bitvector_in_hex()
-    # print("after adding round constant: ", word)
     return word
 
 ## Key Expansion
@@ -191,10 +193,6 @@ def key_expansion(word0, word1, word2, word3, round):   # Key Expansion
         word2[i] = (BitVector(hexstring=word1[i]) ^ BitVector(hexstring = word2[i])).get_bitvector_in_hex()
     for i in range(0,4):
         word3[i] = (BitVector(hexstring=word2[i]) ^ BitVector(hexstring = word3[i])).get_bitvector_in_hex()
-    # print(word0)
-    # print(word1)
-    # print(word2)
-    # print(word3)
     return word0, word1, word2, word3
 
 def convert_to_cipher_text(state_matrix):
@@ -204,138 +202,170 @@ def convert_to_cipher_text(state_matrix):
             cipher_text += str(state_matrix[j][i])
     return cipher_text
 
-plain_text = input("Enter your text: ")
-print(plain_text)
-no_of_strip_char = 16 - (len(plain_text) % 16)
-key = input("Enter key: ")
-key = key[:16]
-while len(key) < 16:
-    key = key + '#'
-print(key)
 
-# Convert the plain text and key to hex
-hex_plaintext = convert_to_hex(plain_text)
-hex_key = convert_to_hex(key)
+def All_Round_Key_Gen(key_matrix, word0, word1, word2, word3):
+    All_Round_Key = [None] * total_round
+    intermediate_round_key = np.empty((4,4), dtype=str)
+    All_Round_Key[0] = key_matrix
 
-
-#convert to a 4*4 matrix
-key_matrix = convert_to_matrix(hex_key)
-
-print("key matrix: \n", key_matrix)
-
-# Construct word from the matrix
-word0 = np.array(key_matrix[:,0])
-word1 = np.array(key_matrix[:,1])
-word2 = np.array(key_matrix[:,2])
-word3 = np.array(key_matrix[:,3])
-
-total_round = 11
-
-## All Round Key Generation
-All_Round_Key = [None] * total_round
-intermediate_round_key = np.empty((4,4), dtype=str)
-All_Round_Key[0] = key_matrix
-
-for round in range(1, total_round):
-    word0, word1, word2, word3 = key_expansion(word0, word1, word2, word3, round)
-    intermediate_round_key = np.concatenate((word0, word1, word2, word3))
-    intermediate_round_key = np.reshape(intermediate_round_key, (4,4))
-    intermediate_round_key = np.transpose(intermediate_round_key)
-    All_Round_Key[round] = intermediate_round_key
-All_Round_Key = np.array(All_Round_Key)
-# print("All Round Key: \n", All_Round_Key)   
-
-All_Cipher_Text_matrix = []
-
-                                            ##### Encryption #####
-## Round 1- 10 for 128 bits
-mode = 1
-Cipher_Text = ""
-while len(hex_plaintext) != 0:
+    for round in range(1, total_round):
+        word0, word1, word2, word3 = key_expansion(word0, word1, word2, word3, round)
+        intermediate_round_key = np.concatenate((word0, word1, word2, word3))
+        intermediate_round_key = np.reshape(intermediate_round_key, (4,4))
+        intermediate_round_key = np.transpose(intermediate_round_key)
+        All_Round_Key[round] = intermediate_round_key
+    All_Round_Key = np.array(All_Round_Key)
+    # print("All Round Key: \n", All_Round_Key) 
+    return All_Round_Key
     
-    # take the first 128 bits of the plain text and construct the state matrix
-    state_array_1D = hex_plaintext[0:16]
-    while len(state_array_1D) < 16:
-        state_array_1D.append(format(ord('#'), "x"))
-    state_matrix = convert_to_matrix(state_array_1D)
-    print("State matrix: \n", state_matrix)
-    del hex_plaintext[0:16]
     
-    ## Round 0: Add Round Key
-    state_matrix = Add_RoundKey(state_matrix, All_Round_Key[0])
-    # print("After Round 0:\n", state_matrix)
+                                                    ##### Encryption #####
+def encryption(hex_plaintext, All_Round_Key):
+    All_Cipher_matrix = []
     
-    ## For Round 1-10
-    for round in range(1,total_round):
-                                 #### 4 steps of encryption ####
-        # print("#### Round: ", round)     
-        #First step: Substution Bytes
-        for i in range(0,row):
-            for j in range(0,column):
-                state_matrix[i][j] = byte_substitution(state_matrix[i][j], mode)
-                
-        #Second Step: Shift Row
-        state_matrix = Shift_Row_Encryption(state_matrix)
-        # print("State Matrix after shifting row: ", state_matrix)
+    ## Round 1- 10 for 128 bits
+    mode = 1
+    while len(hex_plaintext) != 0:
         
-        #Third Step: Mix Column
-        if round != 10:
-            state_matrix = Mix_Column(state_matrix, mode)
-            # print("State Matrix after mix column: ", state_matrix)
+        # take the first 128 bits of the plain text and construct the state matrix
+        state_array_1D = hex_plaintext[0:16]
+        while len(state_array_1D) < 16:
+            state_array_1D.append(format(ord('#'), "x"))
+        state_matrix = convert_to_matrix(state_array_1D)
+        print("State matrix: \n", state_matrix)
+        del hex_plaintext[0:16]
         
-        #Fourth Step: Add Round Key
-        state_matrix = Add_RoundKey(state_matrix, All_Round_Key[round])
-        # print("State Matrix after another round: ", state_matrix)
-    
-    All_Cipher_Text_matrix.append(state_matrix)    
-    block_cipher = convert_to_cipher_text(state_matrix)   
-    print("Cipher Text:")
-    print(block_cipher)
-    
+        ## Round 0: Add Round Key
+        state_matrix = Add_RoundKey(state_matrix, All_Round_Key[0])
+        
+        ## For Round 1-10
+        for round in range(1,total_round):
+            
+                                    #### 4 steps of encryption ####     
+            #First step: Substution Bytes
+            for i in range(0,row):
+                for j in range(0,column):
+                    state_matrix[i][j] = byte_substitution(state_matrix[i][j], mode)
+                    
+            #Second Step: Shift Row
+            state_matrix = Shift_Row_Encryption(state_matrix)
+            
+            #Third Step: Mix Column
+            if round != 10:
+                state_matrix = Mix_Column(state_matrix, mode)
+            
+            #Fourth Step: Add Round Key
+            state_matrix = Add_RoundKey(state_matrix, All_Round_Key[round])
+        
+        All_Cipher_matrix.append(state_matrix)    
+        block_cipher = convert_to_cipher_text(state_matrix)   
+        print("Cipher Text:")
+        print(block_cipher)
+    print("All:\n", All_Cipher_matrix)
+    return All_Cipher_matrix
 
-                                    ##### Decryption #####
-mode = 0
-index = 0;
-while index < len(All_Cipher_Text_matrix):
-    state_matrix = All_Cipher_Text_matrix[index]
-    # print("Decipher time state matrix:\n", state_matrix)
-    ## For Round 0-9
-    for round in range(0,total_round-1):
-                                 #### 4 steps of Decryption ####
-        # print("#### Round: ", round) 
-        #First Step: Add Round Key
-        state_matrix = Add_RoundKey(state_matrix, All_Round_Key[total_round - round - 1])
-        # print("State Matrix after adding round key: ", state_matrix)
+                                                    ##### Decryption #####
+def Decryption(All_Cipher_Text_matrix, All_Round_Key):
+    mode = 0
+    index = 0;
+    full_text = ""
+    while index < len(All_Cipher_Text_matrix):
+        state_matrix = All_Cipher_Text_matrix[index]
+        ## For Round 0-9
+        for round in range(0,total_round-1):
+            
+                                    #### 4 steps of Decryption ####
+            #First Step: Add Round Key
+            state_matrix = Add_RoundKey(state_matrix, All_Round_Key[total_round - round - 1])
+            
+            # Second Step: Mix Column
+            if round != 0:
+                state_matrix = Mix_Column(state_matrix, mode)
+                        
+            #Third Step: Shift Row
+            state_matrix = Shift_Row_Decryption(state_matrix)
+            
+            #Fourth step: Substution Bytes
+            for i in range(0,row):
+                for j in range(0,column):
+                    state_matrix[i][j] = byte_substitution(state_matrix[i][j], mode)
         
-        # Second Step: Mix Column
-        if round != 0:
-            state_matrix = Mix_Column(state_matrix, mode)
-            # print("State Matrix after mix column: ", state_matrix)
-                      
-        #Third Step: Shift Row
-        state_matrix = Shift_Row_Decryption(state_matrix)
-        # print("State Matrix after shifting row: ", state_matrix)
+        ## Round 10: Add Round Key
+        state_matrix = Add_RoundKey(state_matrix, All_Round_Key[0])
         
-        #Fourth step: Substution Bytes
-        for i in range(0,row):
-            for j in range(0,column):
-                state_matrix[i][j] = byte_substitution(state_matrix[i][j], mode)
-        # print("State matrix after byte sub: \n", state_matrix)
+        block_decipher = convert_to_cipher_text(state_matrix)   
+        print("Decipher Text:")
+        print(block_decipher)
+        
+        byte_array = bytearray.fromhex(block_decipher)
+        text = byte_array.decode()
+        if index == len(All_Cipher_Text_matrix) - 1:
+            for i in range(len(text)):
+                if text[i] == "#":
+                    text = text[0:i]
+                    break
+        print(text)
+        full_text += text
+        
+        index += 1
+    return full_text
+
+
+def main():
+    plain_text = input("Enter your text: ")
+    print(plain_text)
+    no_of_strip_char = 16 - (len(plain_text) % 16)
+    key = input("Enter key: ")
+    key = key[:16]
+    while len(key) < 16:
+        key = key + '#'
+    print(key)
+
+    # Convert the plain text and key to hex
+    hex_plaintext = convert_to_hex(plain_text)
+    hex_key = convert_to_hex(key)
+
+
+    #convert to a 4*4 matrix
+    key_matrix = convert_to_matrix(hex_key)
+
+    print("key matrix: \n", key_matrix)
+
+    # Construct word from the matrix
+    word0 = np.array(key_matrix[:,0])
+    word1 = np.array(key_matrix[:,1])
+    word2 = np.array(key_matrix[:,2])
+    word3 = np.array(key_matrix[:,3])
+
+
+    ## All Round Key Generation
+    start_key = time.time()
+    All_Round_Key = All_Round_Key_Gen(key_matrix, word0, word1, word2, word3)  
+    stop_key = time.time()
     
-    ## Round 10: Add Round Key
-    state_matrix = Add_RoundKey(state_matrix, All_Round_Key[0])
-    # print("After Round 10:\n", state_matrix)
     
-    block_decipher = convert_to_cipher_text(state_matrix)   
-    print("Decipher Text:")
-    print(block_decipher)
-    byte_array = bytearray.fromhex(block_decipher)
-    text = byte_array.decode()
-    if index == len(All_Cipher_Text_matrix) - 1:
-        text = text[:16-no_of_strip_char]
-    print(text)
+    start_enc = time.time()
+    All_Cipher_Text_matrix = encryption(hex_plaintext, All_Round_Key)
+    stop_enc = time.time()
+      
+
+    start_dec = time.time()
+    full_text = Decryption(All_Cipher_Text_matrix, All_Round_Key)
+    stop_dec = time.time()
     
-    index += 1
+    print("\nExecution time:")
+    print("key Scheduling: ", stop_key-start_key)
+    print("Encryption time: ", stop_enc-start_enc) 
+    print("Decryption time: ", stop_dec-start_dec) 
+
+    ## Check Similarity
+    if plain_text == full_text:
+        print("Decryptoin Succesful!!")
+        
+        
+if __name__ == "__main__":
+    main()
+    
 
     
 
